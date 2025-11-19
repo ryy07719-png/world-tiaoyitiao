@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { MiniKitProvider } from "@worldcoin/minikit-js/minikit-provider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,11 +25,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        <MiniKitProvider
-          props={{ appId: process.env.NEXT_PUBLIC_MINIKIT_APP_ID ?? "" }}
-        >
-          {children}
-        </MiniKitProvider>
+        {children}
       </body>
     </html>
   );

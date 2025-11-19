@@ -1,6 +1,6 @@
 "use client";
 
-import { MiniKit } from "@worldcoin/minikit-js";
+import { MiniKit, type ISuccessResult } from "@worldcoin/minikit-js";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -18,32 +18,54 @@ export default function VerifyPage() {
     if (typeof window === "undefined" || installAttempted.current) return;
     installAttempted.current = true;
 
-    const installResult = MiniKit.install(process.env.NEXT_PUBLIC_MINIKIT_APP_ID ?? "");
+    const appId = process.env.NEXT_PUBLIC_MINIKIT_APP_ID;
+    if (!appId) {
+      console.error("[MiniKit] NEXT_PUBLIC_MINIKIT_APP_ID is missing");
+      setError("缺少 MiniKit 配置，无法完成验证。");
+      return;
+    }
+
+    const installResult = MiniKit.install(appId);
     if (!installResult.success) {
       console.warn("[MiniKit] install failed:", installResult.errorMessage);
     }
 
-    if (localStorage.getItem(STORAGE_KEY) === "true") {
+    if (window.localStorage.getItem(STORAGE_KEY) === "true") {
       router.replace("/game");
     }
   }, [router]);
 
   const handleVerify = useCallback(async () => {
-    if (loading) return;
+    if (loading || typeof window === "undefined") return;
+
     try {
       setLoading(true);
       setError(null);
 
-      const verifyResult = await MiniKit.commandsAsync.verify({
+      if (!MiniKit.isInstalled()) {
+        throw new Error("请在 World App 内打开并完成验证。");
+      }
+
+      const result = await MiniKit.commandsAsync.verify({
         action: ACTION,
         signal: SIGNAL,
       });
 
-      if (verifyResult.finalPayload.status !== "success") {
-        throw new Error(verifyResult.finalPayload.error_code ?? "World ID 返回失败");
+      const finalPayload = result?.finalPayload as
+        | (ISuccessResult & { status: "success" })
+        | ({ status: string; error_code?: string | null } & Partial<ISuccessResult>)
+        | undefined;
+
+      if (!finalPayload || finalPayload.status !== "success") {
+        throw new Error(finalPayload?.error_code ?? "World ID 返回失败");
       }
 
-      const proofPayload = verifyResult.finalPayload;
+      const proofPayload: ISuccessResult = {
+        proof: finalPayload.proof,
+        merkle_root: finalPayload.merkle_root,
+        nullifier_hash: finalPayload.nullifier_hash,
+        verification_level: finalPayload.verification_level,
+      };
 
       const response = await fetch("/api/verify", {
         method: "POST",
@@ -51,29 +73,27 @@ export default function VerifyPage() {
         body: JSON.stringify({
           action: ACTION,
           signal: SIGNAL,
-          proof: {
-            proof: proofPayload.proof,
-            merkle_root: proofPayload.merkle_root,
-            nullifier_hash: proofPayload.nullifier_hash,
-            verification_level: proofPayload.verification_level,
-          },
+          proof: proofPayload,
         }),
       });
 
       const json = await response.json();
-
       if (!response.ok || !json?.ok) {
         throw new Error(json?.error ?? "服务器校验失败");
       }
 
-      localStorage.setItem(STORAGE_KEY, "true");
+      window.localStorage.setItem(STORAGE_KEY, "true");
       router.replace("/game");
     } catch (err) {
       console.error("[MiniKit] verify error", err);
       setError(
-        err instanceof Error ? err.message : "验证失败，请重试（需在 World App 内打开）。"
+        err instanceof Error
+          ? err.message
+          : "验证失败，请在 World App 内重新尝试。"
       );
-      localStorage.removeItem(STORAGE_KEY);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
     } finally {
       setLoading(false);
     }
@@ -126,7 +146,7 @@ export default function VerifyPage() {
             opacity: loading ? 0.7 : 1,
           }}
         >
-          {loading ? "验证中..." : "开始验证"}
+          {loading ? "验证中..." : "使用 World ID 验证"}
         </button>
 
         {error && (

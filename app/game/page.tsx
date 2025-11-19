@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+const STORAGE_KEY = "world_verified";
+
 export default function GamePage() {
   const router = useRouter();
   const [isVerified, setIsVerified] = useState(false);
@@ -10,13 +12,22 @@ export default function GamePage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const verified = localStorage.getItem("world_verified") === "true";
-    if (!verified) {
-      router.replace("/verify");
-      return;
-    }
-    setIsVerified(true);
-    setChecking(false);
+    let cancelled = false;
+    const verified = window.localStorage.getItem(STORAGE_KEY) === "true";
+
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      if (!verified) {
+        router.replace("/verify");
+      } else {
+        setIsVerified(true);
+      }
+      setChecking(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   if (checking) {

@@ -21,8 +21,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
     const proof = body?.proof as ISuccessResult | undefined;
+    const action = body?.action as string | undefined;
+    const signal = body?.signal as string | undefined;
+
+    if (action !== ACTION || signal !== SIGNAL) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid action or signal" },
+        { status: 400 }
+      );
+    }
 
     if (!proof) {
       return NextResponse.json({ ok: false, error: "Missing proof" }, { status: 400 });
@@ -44,13 +53,12 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: result.detail ?? "World ID 校验失败",
-          result,
         },
         { status: 400 }
       );
     }
 
-    return NextResponse.json({ ok: true, result });
+    return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[MiniKit] Verification failed", error);
     return NextResponse.json(
@@ -62,4 +70,3 @@ export async function POST(req: Request) {
     );
   }
 }
-
