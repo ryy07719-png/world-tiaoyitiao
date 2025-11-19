@@ -57,13 +57,16 @@ export default function VerifyPage() {
         | undefined;
 
       if (!finalPayload || finalPayload.status !== "success") {
-        throw new Error(finalPayload?.error_code ?? "World ID 返回失败");
+        const errorPayload =
+          finalPayload as { status: string; error_code?: string | null };
+
+        throw new Error(errorPayload.error_code ?? "World ID 返回失败");
       }
 
       const proofPayload: ISuccessResult = {
-        proof: finalPayload.proof,
         merkle_root: finalPayload.merkle_root,
         nullifier_hash: finalPayload.nullifier_hash,
+        proof: finalPayload.proof,
         verification_level: finalPayload.verification_level,
       };
 
@@ -122,11 +125,33 @@ export default function VerifyPage() {
           border: "1px solid rgba(148, 163, 184, 0.2)",
         }}
       >
-        <p style={{ fontSize: "12px", letterSpacing: "0.4em", color: "#94a3b8", marginBottom: "8px" }}>
+        <p
+          style={{
+            fontSize: "12px",
+            letterSpacing: "0.4em",
+            color: "#94a3b8",
+            marginBottom: "8px",
+          }}
+        >
           WORLD TIAOYITIAO
         </p>
-        <h1 style={{ fontSize: "28px", fontWeight: 600, marginBottom: "12px" }}>World ID 验证</h1>
-        <p style={{ color: "#cbd5f5", fontSize: "14px", marginBottom: "24px", lineHeight: 1.6 }}>
+        <h1
+          style={{
+            fontSize: "28px",
+            fontWeight: 600,
+            marginBottom: "12px",
+          }}
+        >
+          World ID 验证
+        </h1>
+        <p
+          style={{
+            color: "#cbd5f5",
+            fontSize: "14px",
+            marginBottom: "24px",
+            lineHeight: 1.6,
+          }}
+        >
           请在 World App 中完成验证，以解锁跳一跳游戏。
         </p>
 
@@ -150,7 +175,15 @@ export default function VerifyPage() {
         </button>
 
         {error && (
-          <p style={{ marginTop: "18px", color: "#f87171", fontSize: "14px" }}>{error}</p>
+          <p
+            style={{
+              marginTop: "18px",
+              color: "#f87171",
+              fontSize: "14px",
+            }}
+          >
+            {error}
+          </p>
         )}
       </div>
     </main>
