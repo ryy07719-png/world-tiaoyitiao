@@ -56,18 +56,23 @@ export default function VerifyPage() {
         | ({ status: string; error_code?: string | null } & Partial<ISuccessResult>)
         | undefined;
 
+      // 失败分支：用错误结构读取 error_code
       if (!finalPayload || finalPayload.status !== "success") {
         const errorPayload =
           finalPayload as { status: string; error_code?: string | null };
-
-        throw new Error(errorPayload.error_code ?? "World ID 返回失败");
+        throw new Error(errorPayload?.error_code ?? "World ID 返回失败");
       }
 
+      // 成功分支：断言为完整 ISuccessResult
+      const successPayload = finalPayload as ISuccessResult & {
+        status: "success";
+      };
+
       const proofPayload: ISuccessResult = {
-        merkle_root: finalPayload.merkle_root,
-        nullifier_hash: finalPayload.nullifier_hash,
-        proof: finalPayload.proof,
-        verification_level: finalPayload.verification_level,
+        merkle_root: successPayload.merkle_root,
+        nullifier_hash: successPayload.nullifier_hash,
+        proof: successPayload.proof,
+        verification_level: successPayload.verification_level,
       };
 
       const response = await fetch("/api/verify", {
