@@ -21,13 +21,15 @@ export default function VerifyPage() {
     const appId = process.env.NEXT_PUBLIC_MINIKIT_APP_ID;
     if (!appId) {
       console.error("[MiniKit] NEXT_PUBLIC_MINIKIT_APP_ID is missing");
-      setError("缺少 MiniKit 配置，无法完成验证。");
+      setError("缺少 MiniKit 配置（APP ID），无法完成验证。请先在 Vercel 环境变量中配置。");
       return;
     }
 
     const installResult = MiniKit.install(appId);
+    console.log("[MiniKit] install result:", installResult);
     if (!installResult.success) {
       console.warn("[MiniKit] install failed:", installResult.errorMessage);
+      // 不直接报错，让用户仍然可以尝试点击按钮，看 SDK 返回什么
     }
 
     if (window.localStorage.getItem(STORAGE_KEY) === "true") {
@@ -42,37 +44,33 @@ export default function VerifyPage() {
       setLoading(true);
       setError(null);
 
-      if (!MiniKit.isInstalled()) {
-        throw new Error("请在 World App 内打开并完成验证。");
-      }
+      console.log("[MiniKit] start verify:", { ACTION, SIGNAL });
 
       const result = await MiniKit.commandsAsync.verify({
         action: ACTION,
         signal: SIGNAL,
       });
 
+      console.log("[MiniKit] verify result:", result);
+
       const finalPayload = result?.finalPayload as
         | (ISuccessResult & { status: "success" })
-        | ({ status: string; error_code?: string | null } & Partial<ISuccessResult>)
+        | ({ status: string; error_code?: string | null; error?: string | null } & Partial<ISuccessResult>)
         | undefined;
 
-      // 失败分支：用错误结构读取 error_code
       if (!finalPayload || finalPayload.status !== "success") {
-        const errorPayload =
-          finalPayload as { status: string; error_code?: string | null };
-        throw new Error(errorPayload?.error_code ?? "World ID 返回失败");
+        const anyErr =
+          (finalPayload as any)?.error ||
+          (finalPayload as any)?.error_code ||
+          "World ID 验证失败";
+        throw new Error(anyErr);
       }
 
-      // 成功分支：断言为完整 ISuccessResult
-      const successPayload = finalPayload as ISuccessResult & {
-        status: "success";
-      };
-
       const proofPayload: ISuccessResult = {
-        merkle_root: successPayload.merkle_root,
-        nullifier_hash: successPayload.nullifier_hash,
-        proof: successPayload.proof,
-        verification_level: successPayload.verification_level,
+        merkle_root: finalPayload.merkle_root!,
+        nullifier_hash: finalPayload.nullifier_hash!,
+        proof: finalPayload.proof!,
+        verification_level: finalPayload.verification_level!,
       };
 
       const response = await fetch("/api/verify", {
@@ -85,7 +83,9 @@ export default function VerifyPage() {
         }),
       });
 
-      const json = await response.json();
+      const json = await response.json().catch(() => null);
+      console.log("[MiniKit] /api/verify response:", json);
+
       if (!response.ok || !json?.ok) {
         throw new Error(json?.error ?? "服务器校验失败");
       }
@@ -122,7 +122,8 @@ export default function VerifyPage() {
       <div
         style={{
           width: "360px",
-          background: "rgba(15, 23, 42, 0.85)",
+          maxWidth: "100%",
+          background: "rgba(15, 23, 42, 0.9)",
           padding: "32px",
           borderRadius: "18px",
           textAlign: "center",
@@ -185,6 +186,7 @@ export default function VerifyPage() {
               marginTop: "18px",
               color: "#f87171",
               fontSize: "14px",
+              whiteSpace: "pre-wrap",
             }}
           >
             {error}
