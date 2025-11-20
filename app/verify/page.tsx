@@ -3,16 +3,50 @@
 import { MiniKit, type ISuccessResult } from "@worldcoin/minikit-js";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  WORLDCOIN_ACTION,
+  WORLDCOIN_SIGNAL_STORAGE_KEY,
+  WORLDCOIN_VERIFIED_FLAG,
+  buildSignal,
+} from "@/lib/worldcoin";
 
-const ACTION = "tiaoyitiao-verify";
-const SIGNAL = "tiaoyitiao";
-const STORAGE_KEY = "world_verified";
+const STORAGE_KEY = WORLDCOIN_VERIFIED_FLAG;
 
 export default function VerifyPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const installAttempted = useRef(false);
+  const signalRef = useRef<string | null>(null);
+
+  const getSignal = useCallback(() => {
+    if (signalRef.current) {
+      return signalRef.current;
+    }
+
+    if (typeof window !== "undefined") {
+      const persisted = window.localStorage.getItem(
+        WORLDCOIN_SIGNAL_STORAGE_KEY
+      );
+      if (persisted) {
+        signalRef.current = persisted;
+        return persisted;
+      }
+    }
+
+    const randomPart =
+      typeof window !== "undefined" &&
+      "crypto" in window &&
+      typeof window.crypto.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const nextSignal = buildSignal(randomPart);
+    signalRef.current = nextSignal;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(WORLDCOIN_SIGNAL_STORAGE_KEY, nextSignal);
+    }
+    return nextSignal;
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || installAttempted.current) return;
@@ -33,9 +67,10 @@ export default function VerifyPage() {
     }
 
     if (window.localStorage.getItem(STORAGE_KEY) === "true") {
+      getSignal(); // ensure signal is ready for future requests
       router.replace("/game");
     }
-  }, [router]);
+  }, [getSignal, router]);
 
   const handleVerify = useCallback(async () => {
     if (loading || typeof window === "undefined") return;
@@ -44,11 +79,15 @@ export default function VerifyPage() {
       setLoading(true);
       setError(null);
 
-      console.log("[MiniKit] start verify:", { ACTION, SIGNAL });
+      const signal = getSignal();
+      console.log("[MiniKit] start verify:", {
+        action: WORLDCOIN_ACTION,
+        signal,
+      });
 
       const result = await MiniKit.commandsAsync.verify({
-        action: ACTION,
-        signal: SIGNAL,
+        action: WORLDCOIN_ACTION,
+        signal,
       });
 
       console.log("[MiniKit] verify result:", result);
@@ -58,27 +97,33 @@ export default function VerifyPage() {
         | ({ status: string; error_code?: string | null; error?: string | null } & Partial<ISuccessResult>)
         | undefined;
 
-      if (!finalPayload || finalPayload.status !== "success") {
+      if (
+        finalPayload?.status !== "success" ||
+        !finalPayload?.proof ||
+        !finalPayload?.merkle_root ||
+        !finalPayload?.nullifier_hash ||
+        !finalPayload?.verification_level
+      ) {
         const anyErr =
-          (finalPayload as any)?.error ||
-          (finalPayload as any)?.error_code ||
+          (finalPayload as { error?: string; error_code?: string })?.error ||
+          (finalPayload as { error_code?: string })?.error_code ||
           "World ID 验证失败";
         throw new Error(anyErr);
       }
 
       const proofPayload: ISuccessResult = {
-        merkle_root: finalPayload.merkle_root!,
-        nullifier_hash: finalPayload.nullifier_hash!,
-        proof: finalPayload.proof!,
-        verification_level: finalPayload.verification_level!,
+        merkle_root: finalPayload.merkle_root,
+        nullifier_hash: finalPayload.nullifier_hash,
+        proof: finalPayload.proof,
+        verification_level: finalPayload.verification_level,
       };
 
       const response = await fetch("/api/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: ACTION,
-          signal: SIGNAL,
+          action: WORLDCOIN_ACTION,
+          signal,
           proof: proofPayload,
         }),
       });
@@ -91,6 +136,7 @@ export default function VerifyPage() {
       }
 
       window.localStorage.setItem(STORAGE_KEY, "true");
+      window.localStorage.setItem(WORLDCOIN_SIGNAL_STORAGE_KEY, signal);
       router.replace("/game");
     } catch (err) {
       console.error("[MiniKit] verify error", err);
@@ -101,11 +147,12 @@ export default function VerifyPage() {
       );
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(STORAGE_KEY);
+        window.localStorage.removeItem(WORLDCOIN_SIGNAL_STORAGE_KEY);
       }
     } finally {
       setLoading(false);
     }
-  }, [loading, router]);
+  }, [getSignal, loading, router]);
 
   return (
     <main

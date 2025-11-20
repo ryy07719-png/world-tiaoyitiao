@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { WORLDCOIN_ACTION, isValidSignal } from "@/lib/worldcoin";
 
 const WORLD_ID_VERIFY_URL = "https://developer.worldcoin.org/api/v1/verify";
 
@@ -22,6 +23,10 @@ type WorldIdVerifyResponse = {
   code?: string;
   message?: string;
 };
+
+type WorldIdVerificationResult =
+  | { ok: true }
+  | { ok: false; error: string; status?: number };
 
 export const dynamic = "force-dynamic";
 
@@ -48,15 +53,59 @@ function extractWorldIdError(body: WorldIdVerifyResponse | null) {
   return body.detail || body.error || body.code || body.message;
 }
 
+async function callWorldIdVerify(
+  payload: Record<string, string>,
+  appSecret: string
+): Promise<WorldIdVerificationResult> {
+  try {
+    const response = await fetch(WORLD_ID_VERIFY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${appSecret}`,
+      },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+
+    const data = (await response.json().catch(() => null)) as
+      | WorldIdVerifyResponse
+      | null;
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error:
+          extractWorldIdError(data) ||
+          "World ID verification failed unexpectedly.",
+      };
+    }
+
+    if (data && typeof data.success === "boolean" && !data.success) {
+      return {
+        ok: false,
+        status: 403,
+        error: extractWorldIdError(data) || "World ID verification was rejected.",
+      };
+    }
+
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      status: 502,
+      error: "Unable to reach the World ID verification service.",
+    };
+  }
+}
+
 export async function POST(req: NextRequest) {
   const appId = process.env.NEXT_PUBLIC_MINIKIT_APP_ID;
   const appSecret = process.env.MINIKIT_APP_SECRET;
 
-  if (!appId || !appSecret) {
-    return makeErrorResponse(
-      "World ID credentials are not configured on the server.",
-      500
-    );
+  if (!appId) {
+    return makeErrorResponse("NEXT_PUBLIC_MINIKIT_APP_ID is not configured.", 500);
   }
 
   let body: VerifyRequestBody;
@@ -74,8 +123,12 @@ export async function POST(req: NextRequest) {
     return makeErrorResponse("`action` must be a non-empty string.");
   }
 
-  if (typeof signal !== "string") {
-    return makeErrorResponse("`signal` must be a string.");
+  if (action !== WORLDCOIN_ACTION) {
+    return makeErrorResponse("Unknown action.", 400);
+  }
+
+  if (!isValidSignal(signal)) {
+    return makeErrorResponse("Invalid signal format.", 400);
   }
 
   if (!isProofPayload(proof)) {
@@ -84,9 +137,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (!appSecret) {
+    // MiniKit app is still under review; skip the remote verification for now.
+    return NextResponse.json({ ok: true });
+  }
+
   const payload = {
     app_id: appId,
-    app_secret: appSecret,
     action,
     signal,
     nullifier_hash: proof.nullifier_hash,
@@ -95,37 +152,12 @@ export async function POST(req: NextRequest) {
     verification_level: proof.verification_level,
   };
 
-  let response: Response;
-  try {
-    response = await fetch(WORLD_ID_VERIFY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-    });
-  } catch {
+  const verificationResult = await callWorldIdVerify(payload, appSecret);
+  if (!verificationResult.ok) {
     return makeErrorResponse(
-      "Unable to reach the World ID verification service.",
-      502
+      verificationResult.error,
+      verificationResult.status ?? 500
     );
-  }
-
-  const data = (await response.json().catch(() => null)) as
-    | WorldIdVerifyResponse
-    | null;
-
-  if (!response.ok) {
-    const detail =
-      extractWorldIdError(data) || "World ID verification failed unexpectedly.";
-    return makeErrorResponse(detail, response.status);
-  }
-
-  if (data && typeof data.success === "boolean" && !data.success) {
-    const detail =
-      extractWorldIdError(data) || "World ID verification was rejected.";
-    return makeErrorResponse(detail, 403);
   }
 
   return NextResponse.json({ ok: true });

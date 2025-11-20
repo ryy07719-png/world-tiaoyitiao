@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
-let scores: number[] = [];
-const MAX_LEADERBOARD_SIZE = 10;
+type LeaderboardEntry = {
+  id: string;
+  score: number;
+  createdAt: number;
+  userId?: string | null;
+};
+
+const MAX_LEADERBOARD_SIZE = 20;
+let leaderboard: LeaderboardEntry[] = [];
 
 export const dynamic = "force-dynamic";
 
-function getTopScores() {
-  return [...scores].sort((a, b) => b - a).slice(0, MAX_LEADERBOARD_SIZE);
-}
-
-function validateScore(value: unknown) {
+function validateScore(value: unknown): number | null {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue) || numericValue < 0) {
     return null;
@@ -17,12 +21,26 @@ function validateScore(value: unknown) {
   return numericValue;
 }
 
+function normalizeUserId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function addToLeaderboard(entry: LeaderboardEntry) {
+  leaderboard = [...leaderboard, entry]
+    .sort((a, b) => b.score - a.score || a.createdAt - b.createdAt)
+    .slice(0, MAX_LEADERBOARD_SIZE);
+}
+
 export async function GET() {
-  return NextResponse.json({ ok: true, scores: getTopScores() });
+  return NextResponse.json({ ok: true, leaderboard });
 }
 
 export async function POST(req: NextRequest) {
-  let body: { score?: unknown };
+  let body: { score?: unknown; userId?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -40,7 +58,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  scores.push(score);
+  const entry: LeaderboardEntry = {
+    id: randomUUID(),
+    score,
+    createdAt: Date.now(),
+    userId: normalizeUserId(body?.userId),
+  };
 
-  return NextResponse.json({ ok: true, scores: getTopScores() });
+  addToLeaderboard(entry);
+
+  return NextResponse.json({ ok: true, leaderboard });
 }

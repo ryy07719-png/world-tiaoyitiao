@@ -2,14 +2,30 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import {
+  WORLDCOIN_SIGNAL_STORAGE_KEY,
+  WORLDCOIN_VERIFIED_FLAG,
+} from "@/lib/worldcoin";
 
 export default function GamePage() {
   const router = useRouter();
   const hasSubmittedRef = useRef(false);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const verified =
+      window.localStorage.getItem(WORLDCOIN_VERIFIED_FLAG) === "true";
+    if (!verified) {
+      router.replace("/verify");
+    }
+  }, [router]);
+
+  useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (typeof window !== "undefined" && event.origin !== window.location.origin) {
+      if (
+        typeof window !== "undefined" &&
+        event.origin !== window.location.origin
+      ) {
         return;
       }
 
@@ -32,16 +48,22 @@ export default function GamePage() {
 
       void (async () => {
         try {
+          const userId =
+            typeof window !== "undefined"
+              ? window.localStorage.getItem(WORLDCOIN_SIGNAL_STORAGE_KEY)
+              : null;
+
           const response = await fetch("/api/score", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ score }),
+            body: JSON.stringify({ score, userId }),
           });
 
           const payload = await response.json().catch(() => null);
           if (!response.ok || !payload?.ok) {
             throw new Error(
-              (payload?.error as string | undefined) || "Failed to submit score."
+              (payload?.error as string | undefined) ||
+                "Failed to submit score."
             );
           }
 

@@ -1,13 +1,20 @@
 import Link from "next/link";
 
+type LeaderboardEntry = {
+  id: string;
+  score: number;
+  createdAt: number;
+  userId?: string | null;
+};
+
 type ScoreResponse = {
   ok: boolean;
-  scores?: number[];
+  leaderboard?: LeaderboardEntry[];
   error?: string;
 };
 
 type LeaderboardResult = {
-  scores: number[];
+  leaderboard: LeaderboardEntry[];
   error?: string;
 };
 
@@ -28,14 +35,14 @@ async function fetchLeaderboard(): Promise<LeaderboardResult> {
     }
 
     const json = (await res.json()) as ScoreResponse;
-    if (!json.ok || !Array.isArray(json.scores)) {
+    if (!json.ok || !Array.isArray(json.leaderboard)) {
       throw new Error(json.error || "Leaderboard data is unavailable.");
     }
 
-    return { scores: json.scores };
+    return { leaderboard: json.leaderboard };
   } catch (error) {
     return {
-      scores: [],
+      leaderboard: [],
       error:
         error instanceof Error
           ? error.message
@@ -44,8 +51,14 @@ async function fetchLeaderboard(): Promise<LeaderboardResult> {
   }
 }
 
+function formatUserId(userId?: string | null) {
+  if (!userId) return "匿名玩家";
+  if (userId.length <= 8) return userId;
+  return `${userId.slice(0, 4)}…${userId.slice(-4)}`;
+}
+
 export default async function LeaderboardPage() {
-  const { scores, error } = await fetchLeaderboard();
+  const { leaderboard, error } = await fetchLeaderboard();
 
   return (
     <main
@@ -98,7 +111,7 @@ export default async function LeaderboardPage() {
 
         {error ? (
           <p style={{ color: "#f87171", margin: "16px 0" }}>{error}</p>
-        ) : scores.length === 0 ? (
+        ) : leaderboard.length === 0 ? (
           <p style={{ opacity: 0.7, margin: "16px 0" }}>
             还没有成绩，快去挑战第一名吧！
           </p>
@@ -113,9 +126,9 @@ export default async function LeaderboardPage() {
               gap: 12,
             }}
           >
-            {scores.map((score, index) => (
+            {leaderboard.map((entry, index) => (
               <li
-                key={`${score}-${index}`}
+                key={entry.id}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -155,15 +168,15 @@ export default async function LeaderboardPage() {
                   </span>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 600 }}>
-                      玩家 #{index + 1}
+                      {formatUserId(entry.userId)}
                     </div>
                     <div style={{ fontSize: 12, opacity: 0.75 }}>
-                      得分记录
+                      {new Date(entry.createdAt).toLocaleString()}
                     </div>
                   </div>
                 </div>
                 <div style={{ fontSize: 20, fontWeight: 700 }}>
-                  {score.toFixed(0)}
+                  {entry.score.toFixed(0)}
                 </div>
               </li>
             ))}

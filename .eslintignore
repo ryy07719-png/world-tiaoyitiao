@@ -1,0 +1,6 @@
+# Default Next.js build folders
+.next
+node_modules
+
+# Ignore compiled Cocos (World Tiaoyitiao) assets shipped under public
+public/tiaoyitiao/**
