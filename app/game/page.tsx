@@ -1,27 +1,61 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  WORLDCOIN_SIGNAL_STORAGE_KEY,
+  WORLDCOIN_SESSION_TOKEN_KEY,
   WORLDCOIN_VERIFIED_FLAG,
+  SESSION_HEADER,
 } from "@/lib/worldcoin";
+
+type GameMessage =
+  | { type: "GAME_OVER"; score?: unknown }
+  | Record<string, unknown>;
 
 export default function GamePage() {
   const router = useRouter();
-  const hasSubmittedRef = useRef(false);
+  const sessionTokenRef = useRef<string | null>(null);
+  const submittingRef = useRef(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const token = window.localStorage.getItem(WORLDCOIN_SESSION_TOKEN_KEY);
     const verified =
       window.localStorage.getItem(WORLDCOIN_VERIFIED_FLAG) === "true";
-    if (!verified) {
+
+    if (!token || !verified) {
       router.replace("/verify");
+      return;
     }
+
+    sessionTokenRef.current = token;
+    setReady(true);
   }, [router]);
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
+    if (typeof document === "undefined") return;
+    const original = {
+      margin: document.body.style.margin,
+      padding: document.body.style.padding,
+      overflow: document.body.style.overflow,
+    };
+    document.body.style.margin = "0";
+    document.body.style.padding = "0";
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.margin = original.margin;
+      document.body.style.padding = original.padding;
+      document.body.style.overflow = original.overflow || "auto";
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+
+    const handleMessage = (event: MessageEvent<GameMessage>) => {
       if (
         typeof window !== "undefined" &&
         event.origin !== window.location.origin
@@ -33,44 +67,51 @@ export default function GamePage() {
         return;
       }
 
-      const incomingScore = (event.data as { score?: unknown }).score;
-      const score = Number(incomingScore);
-
-      if (!Number.isFinite(score) || score < 0) {
+      if ((event.data as GameMessage).type !== "GAME_OVER") {
         return;
       }
 
-      if (hasSubmittedRef.current) {
+      const score = Number((event.data as GameMessage).score);
+      if (!Number.isFinite(score) || score <= 0) {
         return;
       }
 
-      hasSubmittedRef.current = true;
+      const sessionToken = sessionTokenRef.current;
+      if (!sessionToken) {
+        router.replace("/verify");
+        return;
+      }
+
+      if (submittingRef.current) return;
+      submittingRef.current = true;
+      setStatus("上传分数中...");
 
       void (async () => {
         try {
-          const userId =
-            typeof window !== "undefined"
-              ? window.localStorage.getItem(WORLDCOIN_SIGNAL_STORAGE_KEY)
-              : null;
-
           const response = await fetch("/api/score", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ score, userId }),
+            headers: {
+              "Content-Type": "application/json",
+              [SESSION_HEADER]: sessionToken,
+            },
+            body: JSON.stringify({ score }),
           });
 
-          const payload = await response.json().catch(() => null);
+          const payload = (await response.json().catch(() => null)) as
+            | { ok?: boolean; error?: string }
+            | null;
+
           if (!response.ok || !payload?.ok) {
-            throw new Error(
-              (payload?.error as string | undefined) ||
-                "Failed to submit score."
-            );
+            throw new Error(payload?.error || "Failed to submit score.");
           }
 
+          setStatus(`分数 ${score} 已提交！`);
           router.push("/leaderboard");
         } catch (error) {
-          console.error("Unable to submit score:", error);
-          hasSubmittedRef.current = false;
+          console.error("[Game] score submit failed", error);
+          setStatus("分数上传失败，请重试。");
+        } finally {
+          submittingRef.current = false;
         }
       })();
     };
@@ -79,72 +120,65 @@ export default function GamePage() {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [router]);
+  }, [ready, router]);
 
   return (
     <main
       style={{
-        minHeight: "100vh",
-        backgroundColor: "#05070e",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
+        width: "100vw",
+        height: "100vh",
+        overflow: "hidden",
+        backgroundColor: "#000",
+        margin: 0,
+        padding: 0,
       }}
     >
-      <section
+      <iframe
+        src="/tiaoyitiao/gameweb/index.html"
         style={{
-          width: "100%",
-          maxWidth: 480,
-          background: "rgba(10,17,40,0.85)",
-          borderRadius: 16,
-          padding: 16,
-          border: "1px solid rgba(148,163,184,0.2)",
-          boxShadow: "0 15px 40px rgba(0,0,0,0.35)",
+          width: "100vw",
+          height: "100vh",
+          border: "none",
+          margin: 0,
+          padding: 0,
+          display: "block",
+          backgroundColor: "black",
+        }}
+        allow="fullscreen"
+        allowFullScreen
+      />
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          padding: "6px 10px",
+          borderRadius: 12,
+          background: "rgba(0,0,0,0.45)",
+          color: "white",
+          fontSize: 12,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-            color: "white",
-          }}
-        >
-          <div>
-            <p style={{ margin: 0, fontSize: 12, opacity: 0.7 }}>
-              WORLD TIAOYITIAO
-            </p>
-            <h1 style={{ margin: 0, fontSize: 22 }}>Jump Challenge</h1>
-          </div>
-          <button
-            onClick={() => router.push("/leaderboard")}
-            style={{
-              borderRadius: 999,
-              border: "1px solid rgba(99,102,241,0.8)",
-              padding: "6px 12px",
-              background: "transparent",
-              color: "white",
-              fontSize: 14,
-              cursor: "pointer",
-            }}
-          >
-            查看排行榜
-          </button>
-        </div>
+        {status || "游戏进行中"}
+      </div>
 
-        <iframe
-          src="/tiaoyitiao/gameweb/index.html"
-          style={{
-            width: "100%",
-            height: 640,
-            border: "none",
-            borderRadius: 12,
-            backgroundColor: "black",
-          }}
-        />
-      </section>
+      <button
+        onClick={() => router.push("/leaderboard")}
+        style={{
+          position: "absolute",
+          top: 12,
+          right: 12,
+          borderRadius: 999,
+          border: "1px solid rgba(99,102,241,0.8)",
+          padding: "6px 12px",
+          background: "rgba(15,23,42,0.7)",
+          color: "white",
+          fontSize: 13,
+          cursor: "pointer",
+        }}
+      >
+        查看排行榜
+      </button>
     </main>
   );
 }

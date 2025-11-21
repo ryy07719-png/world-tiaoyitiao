@@ -1,46 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "crypto";
-
-type LeaderboardEntry = {
-  id: string;
-  score: number;
-  createdAt: number;
-  userId?: string | null;
-};
-
-const MAX_LEADERBOARD_SIZE = 20;
-let leaderboard: LeaderboardEntry[] = [];
+import {
+  addScore,
+  getLeaderboard,
+  getVerifiedSession,
+  type ScoreMetadata,
+} from "@/lib/server-state";
+import { readSessionToken } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-function validateScore(value: unknown): number | null {
+function parseScore(value: unknown) {
   const numericValue = Number(value);
-  if (!Number.isFinite(numericValue) || numericValue < 0) {
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return null;
+  }
+  if (!Number.isInteger(numericValue)) {
     return null;
   }
   return numericValue;
 }
 
-function normalizeUserId(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function addToLeaderboard(entry: LeaderboardEntry) {
-  leaderboard = [...leaderboard, entry]
-    .sort((a, b) => b.score - a.score || a.createdAt - b.createdAt)
-    .slice(0, MAX_LEADERBOARD_SIZE);
-}
-
-export async function GET() {
-  return NextResponse.json({ ok: true, leaderboard });
-}
-
 export async function POST(req: NextRequest) {
-  let body: { score?: unknown; userId?: unknown };
+  let body: { score?: unknown; metadata?: unknown };
+
   try {
     body = await req.json();
   } catch {
@@ -50,22 +32,55 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const score = validateScore(body?.score);
+  const sessionToken = readSessionToken(req);
+  if (!sessionToken) {
+    return NextResponse.json(
+      { ok: false, error: "Missing session token." },
+      { status: 401 }
+    );
+  }
+
+  const session = getVerifiedSession(sessionToken);
+  if (!session) {
+    return NextResponse.json(
+      { ok: false, error: "Invalid or expired session." },
+      { status: 401 }
+    );
+  }
+
+  const score = parseScore(body?.score);
   if (score === null) {
     return NextResponse.json(
-      { ok: false, error: "Score must be a non-negative number." },
+      { ok: false, error: "Score must be a positive integer." },
       { status: 400 }
     );
   }
 
-  const entry: LeaderboardEntry = {
-    id: randomUUID(),
-    score,
-    createdAt: Date.now(),
-    userId: normalizeUserId(body?.userId),
-  };
+  const metadata =
+    body?.metadata && typeof body.metadata === "object"
+      ? (body.metadata as ScoreMetadata)
+      : undefined;
 
-  addToLeaderboard(entry);
+  addScore(sessionToken, score, metadata);
+  return NextResponse.json({ ok: true });
+}
 
-  return NextResponse.json({ ok: true, leaderboard });
+export async function GET(req: NextRequest) {
+  const sessionToken = readSessionToken(req);
+
+  if (!sessionToken) {
+    return NextResponse.json(
+      { ok: false, error: "Missing session token." },
+      { status: 401 }
+    );
+  }
+
+  if (!getVerifiedSession(sessionToken)) {
+    return NextResponse.json(
+      { ok: false, error: "Invalid or expired session." },
+      { status: 401 }
+    );
+  }
+
+  return NextResponse.json({ ok: true, leaderboard: getLeaderboard() });
 }

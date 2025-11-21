@@ -1,32 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { WORLDCOIN_ACTION, isValidSignal } from "@/lib/worldcoin";
-
-const WORLD_ID_VERIFY_URL = "https://developer.worldcoin.org/api/v1/verify";
-
-type ProofPayload = {
-  merkle_root: string;
-  nullifier_hash: string;
-  proof: string;
-  verification_level: string;
-};
+import {
+  WORLDCOIN_ACTION,
+  SESSION_HEADER,
+  isValidSignal,
+  type WorldIdProof,
+} from "@/lib/worldcoin";
+import { storeVerifiedSession } from "@/lib/server-state";
 
 type VerifyRequestBody = {
   action?: unknown;
   signal?: unknown;
   proof?: unknown;
+  sessionToken?: unknown;
 };
-
-type WorldIdVerifyResponse = {
-  success?: boolean;
-  detail?: string;
-  error?: string;
-  code?: string;
-  message?: string;
-};
-
-type WorldIdVerificationResult =
-  | { ok: true }
-  | { ok: false; error: string; status?: number };
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +20,7 @@ function makeErrorResponse(message: string, status = 400) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-function isProofPayload(value: unknown): value is ProofPayload {
+function isProofPayload(value: unknown): value is WorldIdProof {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -48,66 +34,7 @@ function isProofPayload(value: unknown): value is ProofPayload {
   );
 }
 
-function extractWorldIdError(body: WorldIdVerifyResponse | null) {
-  if (!body) return undefined;
-  return body.detail || body.error || body.code || body.message;
-}
-
-async function callWorldIdVerify(
-  payload: Record<string, string>,
-  appSecret: string
-): Promise<WorldIdVerificationResult> {
-  try {
-    const response = await fetch(WORLD_ID_VERIFY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${appSecret}`,
-      },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-    });
-
-    const data = (await response.json().catch(() => null)) as
-      | WorldIdVerifyResponse
-      | null;
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        status: response.status,
-        error:
-          extractWorldIdError(data) ||
-          "World ID verification failed unexpectedly.",
-      };
-    }
-
-    if (data && typeof data.success === "boolean" && !data.success) {
-      return {
-        ok: false,
-        status: 403,
-        error: extractWorldIdError(data) || "World ID verification was rejected.",
-      };
-    }
-
-    return { ok: true };
-  } catch {
-    return {
-      ok: false,
-      status: 502,
-      error: "Unable to reach the World ID verification service.",
-    };
-  }
-}
-
 export async function POST(req: NextRequest) {
-  const appId = process.env.NEXT_PUBLIC_MINIKIT_APP_ID;
-  const appSecret = process.env.MINIKIT_APP_SECRET;
-
-  if (!appId) {
-    return makeErrorResponse("NEXT_PUBLIC_MINIKIT_APP_ID is not configured.", 500);
-  }
-
   let body: VerifyRequestBody;
   try {
     body = await req.json();
@@ -115,9 +42,11 @@ export async function POST(req: NextRequest) {
     return makeErrorResponse("Invalid JSON payload.");
   }
 
-  const action = body?.action;
-  const signal = body?.signal;
-  const proof = body?.proof;
+  const headerToken =
+    typeof req.headers.get(SESSION_HEADER) === "string"
+      ? req.headers.get(SESSION_HEADER)
+      : null;
+  const { action, signal, proof, sessionToken } = body;
 
   if (typeof action !== "string" || !action.trim()) {
     return makeErrorResponse("`action` must be a non-empty string.");
@@ -137,28 +66,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!appSecret) {
-    // MiniKit app is still under review; skip the remote verification for now.
-    return NextResponse.json({ ok: true });
+  const token = (sessionToken as string | undefined)?.trim() || headerToken;
+
+  if (!token) {
+    return makeErrorResponse("`sessionToken` must be provided.", 400);
   }
 
-  const payload = {
-    app_id: appId,
+  // TODO: once the app is approved, replace this mock verification with an actual
+  // call to the World ID verify endpoint using MINIKIT_APP_SECRET.
+  storeVerifiedSession(token, {
     action,
     signal,
-    nullifier_hash: proof.nullifier_hash,
-    merkle_root: proof.merkle_root,
-    proof: proof.proof,
-    verification_level: proof.verification_level,
-  };
-
-  const verificationResult = await callWorldIdVerify(payload, appSecret);
-  if (!verificationResult.ok) {
-    return makeErrorResponse(
-      verificationResult.error,
-      verificationResult.status ?? 500
-    );
-  }
+    createdAt: Date.now(),
+  });
 
   return NextResponse.json({ ok: true });
 }

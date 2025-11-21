@@ -7,7 +7,10 @@ import {
   WORLDCOIN_ACTION,
   WORLDCOIN_SIGNAL_STORAGE_KEY,
   WORLDCOIN_VERIFIED_FLAG,
+  WORLDCOIN_SESSION_TOKEN_KEY,
+  SESSION_HEADER,
   buildSignal,
+  generateSessionToken,
 } from "@/lib/worldcoin";
 
 const STORAGE_KEY = WORLDCOIN_VERIFIED_FLAG;
@@ -18,6 +21,7 @@ export default function VerifyPage() {
   const [error, setError] = useState<string | null>(null);
   const installAttempted = useRef(false);
   const signalRef = useRef<string | null>(null);
+  const sessionTokenRef = useRef<string | null>(null);
 
   const getSignal = useCallback(() => {
     if (signalRef.current) {
@@ -48,6 +52,27 @@ export default function VerifyPage() {
     return nextSignal;
   }, []);
 
+  const getSessionToken = useCallback(() => {
+    if (sessionTokenRef.current) {
+      return sessionTokenRef.current;
+    }
+
+    if (typeof window !== "undefined") {
+      const existing = window.localStorage.getItem(WORLDCOIN_SESSION_TOKEN_KEY);
+      if (existing) {
+        sessionTokenRef.current = existing;
+        return existing;
+      }
+    }
+
+    const token = generateSessionToken();
+    sessionTokenRef.current = token;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(WORLDCOIN_SESSION_TOKEN_KEY, token);
+    }
+    return token;
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined" || installAttempted.current) return;
     installAttempted.current = true;
@@ -66,11 +91,15 @@ export default function VerifyPage() {
       // 不直接报错，让用户仍然可以尝试点击按钮，看 SDK 返回什么
     }
 
-    if (window.localStorage.getItem(STORAGE_KEY) === "true") {
-      getSignal(); // ensure signal is ready for future requests
+    if (
+      window.localStorage.getItem(STORAGE_KEY) === "true" &&
+      window.localStorage.getItem(WORLDCOIN_SESSION_TOKEN_KEY)
+    ) {
+      getSignal();
+      getSessionToken();
       router.replace("/game");
     }
-  }, [getSignal, router]);
+  }, [getSessionToken, getSignal, router]);
 
   const handleVerify = useCallback(async () => {
     if (loading || typeof window === "undefined") return;
@@ -80,6 +109,7 @@ export default function VerifyPage() {
       setError(null);
 
       const signal = getSignal();
+      const sessionToken = getSessionToken();
       console.log("[MiniKit] start verify:", {
         action: WORLDCOIN_ACTION,
         signal,
@@ -120,11 +150,15 @@ export default function VerifyPage() {
 
       const response = await fetch("/api/verify", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          [SESSION_HEADER]: sessionToken,
+        },
         body: JSON.stringify({
           action: WORLDCOIN_ACTION,
           signal,
           proof: proofPayload,
+          sessionToken,
         }),
       });
 
@@ -137,6 +171,7 @@ export default function VerifyPage() {
 
       window.localStorage.setItem(STORAGE_KEY, "true");
       window.localStorage.setItem(WORLDCOIN_SIGNAL_STORAGE_KEY, signal);
+      window.localStorage.setItem(WORLDCOIN_SESSION_TOKEN_KEY, sessionToken);
       router.replace("/game");
     } catch (err) {
       console.error("[MiniKit] verify error", err);
@@ -148,11 +183,12 @@ export default function VerifyPage() {
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(STORAGE_KEY);
         window.localStorage.removeItem(WORLDCOIN_SIGNAL_STORAGE_KEY);
+        window.localStorage.removeItem(WORLDCOIN_SESSION_TOKEN_KEY);
       }
     } finally {
       setLoading(false);
     }
-  }, [getSignal, loading, router]);
+  }, [getSessionToken, getSignal, loading, router]);
 
   return (
     <main

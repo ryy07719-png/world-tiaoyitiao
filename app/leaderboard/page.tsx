@@ -1,64 +1,66 @@
-import Link from "next/link";
+"use client";
 
-type LeaderboardEntry = {
-  id: string;
-  score: number;
-  createdAt: number;
-  userId?: string | null;
-};
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  WORLDCOIN_SESSION_TOKEN_KEY,
+  WORLDCOIN_VERIFIED_FLAG,
+  SESSION_HEADER,
+} from "@/lib/worldcoin";
+import type { PublicScoreEntry } from "@/lib/server-state";
 
-type ScoreResponse = {
-  ok: boolean;
-  leaderboard?: LeaderboardEntry[];
-  error?: string;
-};
+type LeaderboardEntry = PublicScoreEntry;
 
-type LeaderboardResult = {
-  leaderboard: LeaderboardEntry[];
-  error?: string;
-};
+export default function LeaderboardPage() {
+  const router = useRouter();
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-async function fetchLeaderboard(): Promise<LeaderboardResult> {
-  const baseUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
-    "http://localhost:3000";
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const token = window.localStorage.getItem(WORLDCOIN_SESSION_TOKEN_KEY);
+    const verified =
+      window.localStorage.getItem(WORLDCOIN_VERIFIED_FLAG) === "true";
 
-  try {
-    const res = await fetch(`${baseUrl}/api/score`, {
+    if (!token || !verified) {
+      router.replace("/verify");
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+
+    fetch(`/api/leaderboard`, {
       cache: "no-store",
-      next: { revalidate: 0 },
-    });
+      signal: controller.signal,
+      headers: {
+        [SESSION_HEADER]: token,
+      },
+    })
+      .then(async (res) => {
+        const json = await res.json().catch(() => null);
+        if (res.status === 401) {
+          throw new Error("SESSION_EXPIRED");
+        }
+        if (!res.ok || !json?.ok) {
+          throw new Error(json?.error || `Failed to fetch leaderboard (${res.status}).`);
+        }
+        setLeaderboard(json.leaderboard ?? []);
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        if (err instanceof Error && err.message === "SESSION_EXPIRED") {
+          setError("Session expired, please go back and start the game again.");
+          return;
+        }
+        setError(err instanceof Error ? err.message : "加载排行榜失败");
+      })
+      .finally(() => setLoading(false));
 
-    if (!res.ok) {
-      throw new Error(`Failed to fetch leaderboard (${res.status}).`);
-    }
-
-    const json = (await res.json()) as ScoreResponse;
-    if (!json.ok || !Array.isArray(json.leaderboard)) {
-      throw new Error(json.error || "Leaderboard data is unavailable.");
-    }
-
-    return { leaderboard: json.leaderboard };
-  } catch (error) {
-    return {
-      leaderboard: [],
-      error:
-        error instanceof Error
-          ? error.message
-          : "Unable to load leaderboard.",
-    };
-  }
-}
-
-function formatUserId(userId?: string | null) {
-  if (!userId) return "匿名玩家";
-  if (userId.length <= 8) return userId;
-  return `${userId.slice(0, 4)}…${userId.slice(-4)}`;
-}
-
-export default async function LeaderboardPage() {
-  const { leaderboard, error } = await fetchLeaderboard();
+    return () => controller.abort();
+  }, [router]);
 
   return (
     <main
@@ -94,28 +96,35 @@ export default async function LeaderboardPage() {
             </p>
             <h1 style={{ margin: 0, fontSize: 26 }}>排行榜</h1>
           </div>
-          <Link
-            href="/game"
+          <button
+            onClick={() => router.push("/game")}
             style={{
               borderRadius: 999,
               border: "1px solid rgba(99,102,241,0.8)",
               color: "white",
-              textDecoration: "none",
+              background: "transparent",
               padding: "8px 16px",
               fontSize: 14,
+              cursor: "pointer",
             }}
           >
             返回游戏
-          </Link>
+          </button>
         </header>
 
-        {error ? (
+        {loading && <p>排行榜加载中…</p>}
+
+        {error && (
           <p style={{ color: "#f87171", margin: "16px 0" }}>{error}</p>
-        ) : leaderboard.length === 0 ? (
+        )}
+
+        {!loading && !error && leaderboard.length === 0 && (
           <p style={{ opacity: 0.7, margin: "16px 0" }}>
             还没有成绩，快去挑战第一名吧！
           </p>
-        ) : (
+        )}
+
+        {!loading && !error && leaderboard.length > 0 && (
           <ol
             style={{
               listStyle: "none",
@@ -168,7 +177,7 @@ export default async function LeaderboardPage() {
                   </span>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 600 }}>
-                      {formatUserId(entry.userId)}
+                      玩家 #{index + 1}
                     </div>
                     <div style={{ fontSize: 12, opacity: 0.75 }}>
                       {new Date(entry.createdAt).toLocaleString()}
@@ -178,6 +187,18 @@ export default async function LeaderboardPage() {
                 <div style={{ fontSize: 20, fontWeight: 700 }}>
                   {entry.score.toFixed(0)}
                 </div>
+                {entry.metadata?.walletBalance !== undefined && (
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.8,
+                      marginLeft: 12,
+                      textAlign: "right",
+                    }}
+                  >
+                    钱包余额：{entry.metadata.walletBalance}
+                  </div>
+                )}
               </li>
             ))}
           </ol>
